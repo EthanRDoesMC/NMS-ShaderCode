@@ -1,0 +1,593 @@
+////////////////////////////////////////////////////////////////////////////////
+///
+///     @file       GalacticBG.h
+///     @author     hdd
+///     @date       
+/// 
+///     @brief      Experiments
+///
+///     Copyright (c) 2014 Hello Games Ltd. All Rights Reserved.
+///
+////////////////////////////////////////////////////////////////////////////////
+
+//-----------------------------------------------------------------------------
+//      Compilation defines 
+
+
+//-----------------------------------------------------------------------------
+//      Include files
+
+#ifndef D_FRAGMENT
+#define D_FRAGMENT
+#endif
+#include "Common/Defines.shader.h"
+//#include "Common/CommonUniforms.shader.h"
+#include "Common/Common.Shader.h"
+#include "Common/CommonRandom.Shader.h"
+#include "Common/CommonIntersection.Shader.h"
+#include "Common/Wombat/SimplexPerlin3D.glsl"
+#include "Common/Wombat/Cellular3D.glsl"
+#include "Common/Wombat/Value3D.glsl"
+
+#include "Custom/GalaxyCommon.h"
+
+//TF_BEGIN used for shaderGenerator to insert new lines
+//otherwise parser needs to become much more complicated replacing many occurences in a single line
+#ifndef D_PLATFORM_METAL
+#define _NL
+#endif
+//TF_END
+
+//-----------------------------------------------------------------------------
+//      Global Data
+
+//-----------------------------------------------------------------------------
+//      Typedefs and Classes 
+#define PI 3.141592653589793
+
+#if defined(D_PLATFORM_METAL)
+#define D_USE_GALACTIC_MACROS
+#endif
+
+//-----------------------------------------------------------------------------
+///
+///     Input
+///
+///     @brief  Input
+///
+//-----------------------------------------------------------------------------
+DECLARE_INPUT
+    INPUT_SCREEN_POSITION
+    INPUT_SCREEN_SLICE
+
+    INPUT( vec2, mTexCoordsVec2,     TEXCOORD0 )
+
+DECLARE_INPUT_END
+
+
+//-----------------------------------------------------------------------------
+//    Functions
+#if !defined(D_USE_GALACTIC_MACROS)
+vec3 ComputeRaymarchDir( vec2 lUV , TracingFsFxAndFsMapUniforms lTracingUniforms )
+{
+  vec3 lvRaymarchDir   = ( lTracingUniforms.gTracePDX.xyz * (1.0 - lUV.x) ) + lTracingUniforms.gTraceScreenCenter.xyz;
+       lvRaymarchDir  += ( lTracingUniforms.gTracePDY.xyz * (1.0 - lUV.y) ) ;
+       lvRaymarchDir   = normalize( lvRaymarchDir );
+
+  return lvRaymarchDir;
+}
+#else
+#define ComputeRaymarchDir(lUV, lTracingUniforms) \
+( \
+    normalize((lTracingUniforms.gTracePDX.xyz * (1.0 - lUV.x)) + \
+    lTracingUniforms.gTraceScreenCenter.xyz + \
+    (lTracingUniforms.gTracePDY.xyz * (1.0 - lUV.y))) \
+)
+#endif
+
+
+vec3 LookupCLUTDual( float lfThroughClut, float lfBetweenClut, ColourPalettes lColourPalettes )
+{
+  float lfBaseRow     = lfThroughClut * 9.0;
+  float lfBaseRowFrac = fract( lfBaseRow );
+
+  int liFromRowIndex  = int( floor(lfBaseRow) );
+  int liToRowIndex    = int(  ceil(lfBaseRow) );
+
+  return mix(
+
+         mix( ARRAY_LOOKUP_FS( lColourPalettes, mpColourPalettesPerMesh, gLargeAreaPrimaryLUT,   liFromRowIndex ).rgb,  ARRAY_LOOKUP_FS( lColourPalettes, mpColourPalettesPerMesh, gLargeAreaPrimaryLUT,   liToRowIndex ).rgb, lfBaseRowFrac),
+         mix( ARRAY_LOOKUP_FS( lColourPalettes, mpColourPalettesPerMesh, gLargeAreaSecondaryLUT, liFromRowIndex ).rgb,  ARRAY_LOOKUP_FS( lColourPalettes, mpColourPalettesPerMesh, gLargeAreaSecondaryLUT, liToRowIndex ).rgb, lfBaseRowFrac),
+
+         lfBetweenClut);
+}
+
+
+vec3 LookupCLUT( float lfThroughClut, ColourPalettes lColourPalettes )
+{
+  float lfBaseRow     = lfThroughClut * 9.0;
+  float lfBaseRowFrac = fract( lfBaseRow );
+
+  int liFromRowIndex  = int( floor(lfBaseRow) );
+  int liToRowIndex    = int(  ceil(lfBaseRow) );
+
+  return mix(
+      ARRAY_LOOKUP_FS( lColourPalettes, mpColourPalettesPerMesh, gLargeAreaPrimaryLUT, liFromRowIndex ).rgb,
+      ARRAY_LOOKUP_FS( lColourPalettes, mpColourPalettesPerMesh, gLargeAreaPrimaryLUT, liToRowIndex ).rgb,
+      lfBaseRowFrac);
+}
+
+
+#if !defined(D_USE_GALACTIC_MACROS)
+float Vignette( vec2 uv, TracingFsFxAndFsMapUniforms lMapUniforms )
+{
+  uv = (uv - 0.5) * lMapUniforms.gVignetteLensFlareConfig.x;
+  return clamp( cos(uv.x * M_PI) * cos(uv.y * M_PI), lMapUniforms.gVignetteLensFlareConfig.y, 1.0 );
+}
+#else
+#define Vignette(uv, lMapUniforms) \
+( \
+    clamp(cos( ( uv.x -0.5 ) * lMapUniforms.gVignetteLensFlareConfig.x * M_PI ) * \
+        cos( ( uv.y - 0.5 ) * lMapUniforms.gVignetteLensFlareConfig.x * M_PI ), \
+    lMapUniforms.gVignetteLensFlareConfig.y, \
+    1.0) \
+)
+#endif
+
+
+vec3 ComputeLensflare(vec2 uv, vec2 pos, vec4 spread, float inf, float stretch)
+{
+  vec2 uvd = uv * ( length(uv) * stretch );
+
+  vec3 edge;
+  edge.r  = (1.0 / (1.0 + 32.0 * pow( length(uvd+spread.x * pos), spread.w) ) )   * 1.02;
+  edge.g  = (1.0 / (1.0 + 32.0 * pow( length(uvd+spread.y * pos), spread.w) ) )   * 0.94;
+  edge.b  = (1.0 / (1.0 + 32.0 * pow( length(uvd+spread.z * pos), spread.w) ) )   * 0.90;
+  
+  return saturate(edge) * inf;
+}
+
+#if !defined(D_USE_GALACTIC_MACROS)
+vec3 ComputeGoalVirtualPlane( vec3 lvRaymarchDir, TracingFsFxAndFsMapUniforms lTracingUniforms )
+{
+    vec3 lvGoalDir    = lTracingUniforms.gGoalCenterDir.xyz;
+    vec3 lvGoalPerpA  = lTracingUniforms.gGoalCenterPerpU.xyz;
+    vec3 lvGoalPerpB  = lTracingUniforms.gGoalCenterPerpV.xyz;
+
+    // intersect with place facing from goal
+    float lfT   = dot( lvGoalDir,   lvRaymarchDir );
+
+    // generate UV for lens fx
+    float lfU   = dot( lvGoalPerpA, lvRaymarchDir );
+    float lfV   = dot( lvGoalPerpB, lvRaymarchDir );
+
+    return vec3( saturate(lfT), lfU, lfV );
+}
+#else
+#define ComputeGoalVirtualPlane(lvRaymarchDir, lTracingUniforms ) \
+vec3( \
+    saturate( dot( lTracingUniforms.gGoalCenterDir.xyz,   lvRaymarchDir )), \
+    dot(lTracingUniforms.gGoalCenterPerpU.xyz, lvRaymarchDir ), \
+    dot(lTracingUniforms.gGoalCenterPerpV.xyz, lvRaymarchDir ) \
+)
+#endif
+
+
+//----------------------------------------------------------------------------------------------------------------------------------------------
+// bg colour
+
+#ifdef D_GALACTIC_BACKGROUND
+
+
+FRAGMENT_MAIN_COLOUR_SRT
+{
+    vec2 lTexCoords = TEX_COORDS;
+    vec2   lPixelCoordsVec2 = SCREENSPACE_AS_RENDERTARGET_UVS(lTexCoords);
+    if (lUniforms.mpPerFrame->gFoVValuesVec4.z == 2.0)
+    {
+        lPixelCoordsVec2.x = (lPixelCoordsVec2.x - lUniforms.mpPerFrame->gVREyeInfoVec3.y) * lUniforms.mpPerFrame->gVREyeInfoVec3.z;
+    }
+
+    vec3 lvRaymarchDir = ComputeRaymarchDir( lPixelCoordsVec2, DEREF_PTR( lUniforms.mpGalaxyMapPerMesh ) );
+
+	vec4 lOutputColour;
+	{
+		vec3 lvCentralMarchDir = ComputeRaymarchDir(vec2(0.5, 0.5), DEREF_PTR(lUniforms.mpGalaxyMapPerMesh));
+
+		float tGal = dot(lvRaymarchDir, vec3(0.0f, 0.0f, 1.0f));
+		float tGalacticCenter = saturate((tGal + 1.0) * 0.5);
+
+		//float tCellScaleTowardsCenter = lUniforms.mpGalaxyMapPerMesh->gBGCellConfig.x - (tGalacticCenter * (lUniforms.mpGalaxyMapPerMesh->gBGCellConfig.x * 0.6));
+		float tCellStructure = 0.25f;// Cellular3D( (lvRaymarchDir * tCellScaleTowardsCenter) + (lUniforms.mpGalaxyMapPerMesh->gGalacticScale.xyz * lUniforms.mpGalaxyMapPerMesh->gBGCellConfig.y) );
+		vec3 bgRootPoint = (lUniforms.mpGalaxyMapPerMesh->gGalacticScale.xyz * 100.0);
+		bgRootPoint += lvCentralMarchDir;
+		float bgCluster = Value3D(bgRootPoint * lUniforms.mpGalaxyMapPerMesh->gBGCellConfig.w);
+		vec3 bgClusterColour = LookupCLUT(bgCluster, DEREF_PTR(lUniforms.mpColourPalettesPerMesh));
+		vec3 bgBase = bgClusterColour * lUniforms.mpGalaxyMapPerMesh->gBGColourScales.x;
+
+		float cCellHorizonInf = lUniforms.mpGalaxyMapPerMesh->gBGCellConfig.z;
+		float cCellHorizonInfHalf = cCellHorizonInf * -0.5;
+		float cCellZ = ( cCellHorizonInfHalf + (tCellStructure * cCellHorizonInf) ) * saturate(0.9 - tGalacticCenter);
+		float tHorizon = dot(lvRaymarchDir, vec3(0.0, 1.0, cCellZ));
+		float zDir = 1.0 - abs(tHorizon);
+
+		zDir = saturate(zDir);
+		float tDir = pow(zDir, 4.0);
+
+		vec3 fringeCol = mix(
+			bgBase * lUniforms.mpGalaxyMapPerMesh->gBGColourScales.y,
+			bgBase * lUniforms.mpGalaxyMapPerMesh->gBGColourScales.z,
+			tGalacticCenter);
+
+		vec3 outputCol = mix(
+			bgBase * lUniforms.mpGalaxyMapPerMesh->gBGColourScales.w,
+			fringeCol,
+			(lUniforms.mpPerFrame->gFoVValuesVec4.z == 2.0) ? 0.0 : (tDir + (tCellStructure * tCellStructure * (tDir * tDir * tDir) * lUniforms.mpGalaxyMapPerMesh->gBGColourConfig.x))
+		);
+
+		outputCol = mix(vec3(0.5, 0.5, 0.5), outputCol, 1.3);
+		lOutputColour = vec4( saturate(outputCol), 1.0 );
+	}
+
+	float lfInvNebulaeSrcAlpha = 1.0;
+    if (lUniforms.mpPerFrame->gFoVValuesVec4.z != 2.0)
+    {
+        vec4 lNebulaeColour = texture2DLod(SAMPLER_GETMAP(lUniforms.mpGalaxyMapPerMesh, gNebulaeMap), lTexCoords, 0.0);
+		lfInvNebulaeSrcAlpha -= lNebulaeColour.a;
+		// D3D11_BLEND_ONE, D3D11_BLEND_INV_SRC_ALPHA
+		lOutputColour = (lOutputColour * lfInvNebulaeSrcAlpha) + lNebulaeColour;
+    }
+
+    vec4 lAtmosColour = texture2DLod(SAMPLER_GETMAP(lUniforms.mpGalaxyMapPerMesh, gAtmosMap), lTexCoords, 0.0);
+	lOutputColour.rgb += lAtmosColour.rgb * lUniforms.mpGalaxyMapPerMesh->gBGColourConfig.z;
+
+    if ( lUniforms.mpPerFrame->gFoVValuesVec4.z != 2.0 )
+    {
+	  vec3 lvGoalTUV = ComputeGoalVirtualPlane(lvRaymarchDir, DEREF_PTR(lUniforms.mpGalaxyMapPerMesh));
+	  float lfGoalSize = lUniforms.mpGalaxyMapPerMesh->gGoalCenterDir.w;
+
+      // 2D sun overlay (not in VR)
+      // galactic sun overlay; always visible through everything - bg effect will add the rest
+      float galSunPulse = mix(lUniforms.mpGalaxyMapPerMesh->gSunCoreConfig.x, lUniforms.mpGalaxyMapPerMesh->gSunCoreConfig.y, lUniforms.mpGalaxyMapPerMesh->gInterest.z);
+
+      float lfRescale = 1.5 - lfGoalSize;
+
+      float galSunCore = 1.0 / ( length( vec2(-lvGoalTUV.y, lvGoalTUV.z) ) * ( galSunPulse * lfRescale ) );
+      galSunCore *= lUniforms.mpGalaxyMapPerMesh->gSunCoreConfig.z * lvGoalTUV.x;
+
+      lOutputColour = mix(
+            lOutputColour,
+            lUniforms.mpGalaxyMapPerMesh->gSunCoreColour,
+            saturate( galSunCore * lfInvNebulaeSrcAlpha ) );
+
+      // 2D flare (not in VR)
+      float lfLensFlareStrength = lUniforms.mpGalaxyMapPerMesh->gBGColourConfig.w + (lUniforms.mpGalaxyMapPerMesh->gInterest.y * 0.3);
+      float lfLensFlareInf      = lvGoalTUV.x;
+      float lfLensStretch       = mix(lUniforms.mpGalaxyMapPerMesh->gVignetteLensFlareConfig.z, lUniforms.mpGalaxyMapPerMesh->gVignetteLensFlareConfig.w, 1.0 - lvGoalTUV.x);
+	  float lcfScreenAspect = lUniforms.mpGalaxyMapPerMesh->gScreen.z * lUniforms.mpPerFrame->gVREyeInfoVec3.z;
+
+      vec2 lvLensFlareUV        = vec2( (lPixelCoordsVec2.x - 0.5) * lcfScreenAspect, (lPixelCoordsVec2.y - 0.5) );
+      vec2 lvLensFlareLocation  = vec2( -lvGoalTUV.y, lvGoalTUV.z );
+
+      lOutputColour.rgb +=
+          lUniforms.mpGalaxyMapPerMesh->gBGLensFlareColour.rgb *
+          ComputeLensflare(lvLensFlareUV, lvLensFlareLocation, lUniforms.mpGalaxyMapPerMesh->gBGLensFlareSpread, lfLensFlareInf, lfLensStretch) *
+          lfLensFlareStrength;
+          /*lfGoalSize;*/
+    }
+
+    // final composition adjustment
+
+    lOutputColour.rgb = BrightnessVibranceContrast(
+      lOutputColour.rgb, 
+      lUniforms.mpGalaxyMapPerMesh->gCompositeControlBVCG.x,
+      lUniforms.mpGalaxyMapPerMesh->gCompositeControlBVCG.y,
+      lUniforms.mpGalaxyMapPerMesh->gCompositeControlBVCG.z );
+
+    // fast anomorphic flare thing
+    // abusing https://www.shadertoy.com/view/Md3SDS
+    if (lUniforms.mpPerFrame->gFoVValuesVec4.z != 2.0) // not in VR
+    {
+      vec4 lAnoStreak1 = lUniforms.mpGalaxyMapPerMesh->gAnoStreakConfig1;
+      vec4 lAnoStreak2 = lUniforms.mpGalaxyMapPerMesh->gAnoStreakConfig2;
+
+      //vec2 A  = vec2( 0.0, sin( PI / 2 ) );
+
+      vec2 U  = vec2( (lPixelCoordsVec2.x - 0.5), (lPixelCoordsVec2.y - 0.5) );
+           U += lAnoStreak1.xy;
+           //U  = MUL( mat2( 0, 0, lAnoStreak1.w, lAnoStreak2.w ), abs( MUL( mat2( A, -A.y, A.x ), U ) ) );
+           U  = abs( U );
+           U  = vec2( lAnoStreak2.w * U.x + lAnoStreak1.w * U.y, 0 );
+
+      float lfStreak  = 0.2 / U.x;
+            lfStreak *= lAnoStreak1.z;
+            lfStreak *= ( 1.0 - (lfInvNebulaeSrcAlpha * 0.3) );
+	
+	  vec4 lAnoStreak3 = lUniforms.mpGalaxyMapPerMesh->gAnoStreakConfig3;
+      vec3  lStreakColour = mix( lAnoStreak2.xyz, lAnoStreak3.xyz, saturate( lfStreak ) );
+
+      lOutputColour.rgb += lStreakColour * pow( lfStreak, lAnoStreak3.w );
+    }
+
+    lOutputColour.rgb = Desaturate(
+      lOutputColour.rgb, 
+      lUniforms.mpGalaxyMapPerMesh->gCompositeControlBVCG.w );
+
+    lOutputColour.rgb *= Vignette( lPixelCoordsVec2, DEREF_PTR( lUniforms.mpGalaxyMapPerMesh ) );
+
+    FRAGMENT_COLOUR = saturate(lOutputColour);
+}
+
+#endif // D_GALACTIC_BACKGROUND
+
+
+
+
+//----------------------------------------------------------------------------------------------------------------------------------------------
+// nebulae
+
+#ifdef D_GALACTIC_FOREGROUND
+
+
+#ifdef D_PLATFORM_ORBIS
+#pragma argument(targetoccupancy_atallcosts=60)
+#endif
+
+STATIC_CONST mat3 kNoiseMat3      = mat3(  0.00,  0.80,  0.60, 
+                                            -0.80,  0.36, -0.48, 
+                                            -0.60, -0.48,  0.64 );
+
+float Noise3D_Texture( vec3 lPositionVec3, SAMPLER2DARG( lNoiseMap ) )
+{
+    vec3 p = floor( lPositionVec3 );
+    vec3 f = fract( lPositionVec3 );
+
+    f = f*f*(3.0-2.0*f);
+    vec2 uv = (p.xy+vec2(37.0,17.0)*p.z) + f.xy;
+    uv = ( uv + 0.5 ) / 256.0;
+    vec2 rg = texture2DLod( lNoiseMap, uv, 0.0 ).yx;
+
+    return -1.0 + ( mix( rg.x, rg.y, f.z ) * 2.0 );
+}
+
+//-----------------------------------------------------------------------------
+
+float Nebulae_Sample4(vec3 lvPos, SAMPLER2DARG( lNoiseMap ) )
+{
+    vec3 lvSample = 2.5 * lvPos;
+
+    float lfOut;
+    lfOut  = 0.50000 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) ); 
+    lvSample = MUL( kNoiseMat3, ( lvSample * 2.02 ) );
+
+    lfOut += 0.25000 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) ); 
+    lvSample = MUL( kNoiseMat3, ( lvSample * 2.03 ) );
+
+    lfOut += 0.12500 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) );
+    lvSample = MUL( kNoiseMat3, ( lvSample * 2.01 ) );
+
+    lfOut += 0.06250 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) );
+
+    return saturate( lfOut );
+}
+
+float Nebulae_Sample3(vec3 lvPos, SAMPLER2DARG( lNoiseMap ) )
+{
+    vec3 lvSample = 2.5 * lvPos;
+
+    float lfOut;
+    lfOut  = 0.50000 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) ); 
+    lvSample = MUL( kNoiseMat3, ( lvSample * 2.02 ) );
+
+    lfOut += 0.25000 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) ); 
+    lvSample = MUL( kNoiseMat3, ( lvSample * 2.03 ) );
+
+    lfOut += 0.12500 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) );
+
+    return saturate( lfOut );
+}
+
+float Nebulae_Sample2(vec3 lvPos, SAMPLER2DARG( lNoiseMap ) )
+{
+    vec3 lvSample = 2.5 * lvPos;
+
+    float lfOut;
+    lfOut  = 0.50000 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) ); 
+    lvSample = MUL( kNoiseMat3, ( lvSample * 2.02 ) );
+
+    lfOut += 0.25000 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) ); 
+
+    return saturate( lfOut );
+}
+
+float Nebulae_Sample1(vec3 lvPos, SAMPLER2DARG( lNoiseMap ) )
+{
+    vec3 lvSample = 2.5 * lvPos;
+
+    float lfOut;
+    lfOut  = 0.50000 * Noise3D_Texture( lvSample, SAMPLER2DPARAM( lNoiseMap ) );
+
+    return saturate( lfOut );
+}
+
+//-----------------------------------------------------------------------------
+float TraceShadowRay( vec3 p, SAMPLER2DARG( lNoiseMap ) )
+{
+  float shadow = 1.0;
+  vec3 shadpos = p;
+
+  {
+    shadpos.z += 0.05;
+    shadow = shadow - Nebulae_Sample4( shadpos, SAMPLER2DPARAM( lNoiseMap ) ) * shadow;
+  }
+  {
+    shadpos.z += 0.05;
+    shadow = shadow - Nebulae_Sample3( shadpos, SAMPLER2DPARAM( lNoiseMap ) ) * shadow;
+  }
+
+  return shadow;
+}
+
+#if defined(D_GALACTIC_LOW) || !defined ( D_PLATFORM_SWITCH )
+#define _NEBULA_RAYMARCH_LP( _SAMPLESINBLOCK, _BLOCKSTART, _TOTALSAMPLES, _LOD, _DENSMUL, _SCALEFORSMALLERSAMPLECOUNT ) \
+{																	                    \
+_NL  for( int i=0; i < _SAMPLESINBLOCK; ++i )                                              \
+_NL  {                                                                                     \
+_NL    if( sum.a > cAlphaThreshold )                                                       \
+_NL      break;                                                                            \
+_NL                                                                                        \
+_NL    float x = float ( i + _BLOCKSTART );                                                \
+_NL    float scale = t + 2.5 * pow( x / float ( _TOTALSAMPLES ), 3.0 );                  \
+_NL                                                                                        \
+_NL    vec3 pos = ro + ( scale * rd );                                                     \
+_NL                                                                                        \
+_NL    float value = Nebulae_Sample##_LOD( pos, SAMPLER2DPARAM( lNoiseMap ) );             \
+_NL    if (value != 0.0)																	\
+_NL    {																					\
+_NL	    float cluster = Nebulae_Sample3( pos * cScaleMultiplier, SAMPLER2DPARAM( lNoiseMap ) ); \
+_NL	    float clusterColour = Value3D(pos * lMapUniforms.gBGCellConfig.w);                  \
+_NL	    float shadow = TraceShadowRay( pos, SAMPLER2DPARAM( lNoiseMap ) );                  \
+_NL	                                                                                        \
+_NL	    vec3 col = LookupCLUTDual( clusterColour, smoothstep(-1.0, 1.0, cluster), lColourPalettes ); \
+_NL	                                                                                        \
+_NL	    col.xyz *= mix( cShadowMultiplier, vec3(1.0, 1.0, 1.0), shadow );                   \
+_NL	                                                                                        \
+_NL		float cutOff = cDensityCutOff + ( cluster * _DENSMUL );                             \
+_NL                                                                                        	\
+_NL    	value  = value * saturate(cutOff);                                                  \
+_NL    	value *= cValueMultiplier;                                                          \
+_NL	    col *= value * _SCALEFORSMALLERSAMPLECOUNT;                                         \
+_NL	    sum = sum + vec4( col, value ) * ( 1.0 - value );                                   \
+_NL	   }                                                                                       \
+_NL  }		                                                                                    \
+}
+#else
+#define _NEBULA_RAYMARCH_LP(_SAMPLES,_LOD,_DENSMUL ) \
+{ \
+_NL for( int i=0; i<_SAMPLES; i++ ) \
+_NL { \
+_NL   if( sum.a > cAlphaThreshold ) \
+_NL       break; \
+_NL   vec3 pos = ro + ( t * rd ); \
+_NL   float value  = Nebulae_Sample##_LOD( pos, SAMPLER2DPARAM( lNoiseMap ) ); \
+_NL   if (value != 0.0) \
+_NL   { \
+_NL      float cluster = Nebulae_Sample3( pos * cScaleMultiplier, SAMPLER2DPARAM( lNoiseMap ) ); \
+_NL      float clusterColour = Value3D(pos * cValue3DMultiplier); \
+_NL      float shadow = TraceShadowRay( pos, SAMPLER2DPARAM( lNoiseMap ) ); \
+_NL      vec3 col = LookupCLUTDual( clusterColour, smoothstep(-1.0, 1.0, cluster), lColourPalettes ); \
+_NL      col.xyz *= mix( cShadowMultiplier, vec3(1.0, 1.0, 1.0), shadow ); \
+_NL      float cutOff = cDensityCutOff + ( cluster * _DENSMUL ); \
+_NL      value  = value * saturate(cutOff); \
+_NL      value *= cValueMultiplier; \
+_NL      col *= value; \
+_NL      sum = sum + vec4( col, value ) * ( 1.0 - value ); \
+_NL   } \
+_NL   t += max( cMinStepSize, \
+_NL           cMaxStepSize * t ); \
+_NL } \
+}
+#endif
+
+
+//-----------------------------------------------------------------------------
+vec4 DoRaymarch( vec3 ro, vec3 rd, float t, TracingFsFxAndFsMapUniforms lMapUniforms, ColourPalettes lColourPalettes, SAMPLER2DARG( lNoiseMap ) )
+{
+  vec4 sum = vec4(0.0, 0.0, 0.0, 0.0);
+
+  vec3 cShadowMultiplier    = vec3( 0.086, 0.086, 0.089 );
+  float cValueMultiplier    = lMapUniforms.gNebulaeTraceConfig.x;
+  float cScaleMultiplier    = lMapUniforms.gNebulaeTraceConfig.y;
+  float cDensityMultiplier  = lMapUniforms.gNebulaeTraceConfig.z;
+  float cDensityCutOff      = lMapUniforms.gNebulaeTraceConfig.w;
+  float cMinStepSize		= lMapUniforms.gNebulaeStepRange_AlphaPow.x;
+  float cMaxStepSize		= lMapUniforms.gNebulaeStepRange_AlphaPow.y;
+  float cAlphaThreshold     = 0.99;
+  float cValue3DMultiplier = lMapUniforms.gBGCellConfig.w;
+
+#if defined( D_GALACTIC_LOW )
+  //TF_BEGIN
+  // Switch path with modified iterations
+  int cRaySum = int(lMapUniforms.gIterations.x + lMapUniforms.gIterations.y + lMapUniforms.gIterations.z);
+	_NEBULA_RAYMARCH_LP(int(lMapUniforms.gIterations.x), 0,									cRaySum, 4, (cDensityMultiplier),			lMapUniforms.gIterations.w)
+
+	_NEBULA_RAYMARCH_LP(int(lMapUniforms.gIterations.y), int(lMapUniforms.gIterations.x),	cRaySum, 3, (cDensityMultiplier * 0.98),	lMapUniforms.gIterations.w)
+
+	_NEBULA_RAYMARCH_LP(int(lMapUniforms.gIterations.z), int(lMapUniforms.gIterations.x + lMapUniforms.gIterations.y), cRaySum, 2, (cDensityMultiplier * 0.96), lMapUniforms.gIterations.w)
+  //TF_END
+  
+#elif !defined ( D_PLATFORM_SWITCH )
+
+  _NEBULA_RAYMARCH_LP( 30, 0, 55, 4, (cDensityMultiplier       ), 2.0 )
+  
+  _NEBULA_RAYMARCH_LP( 15, 30, 55, 3, (cDensityMultiplier * 0.98), 2.0 )
+  
+  _NEBULA_RAYMARCH_LP( 10, 45, 55, 2, (cDensityMultiplier * 0.96), 2.0 )
+
+#else
+  _NEBULA_RAYMARCH_LP( 50, 4, (cDensityMultiplier       )  )
+  
+  _NEBULA_RAYMARCH_LP( 40, 3, (cDensityMultiplier * 0.98)  )
+  
+  _NEBULA_RAYMARCH_LP( 30, 2, (cDensityMultiplier * 0.96)  )
+#endif
+
+
+  return saturate( sum );
+}
+
+//-----------------------------------------------------------------------------
+FRAGMENT_MAIN_COLOUR_SRT
+{
+    vec2 lTexCoords = TEX_COORDS;
+    vec2 lPixelCoordsVec2 = SCREENSPACE_AS_RENDERTARGET_UVS(lTexCoords);
+    if (lUniforms.mpPerFrame->gFoVValuesVec4.z == 2.0)
+    {
+        lPixelCoordsVec2.x = (lPixelCoordsVec2.x - lUniforms.mpPerFrame->gVREyeInfoVec3.y) * lUniforms.mpPerFrame->gVREyeInfoVec3.z;
+    }
+
+    vec3 lvRaymarchDir = ComputeRaymarchDir( lPixelCoordsVec2, DEREF_PTR( lUniforms.mpGalaxyMapPerMesh ) );
+
+	vec4 lOutputColour = float2vec4(0);
+
+    // establish a consistent trace origin based on the galactic megascale
+    vec3 lvTracePoint = (lUniforms.mpGalaxyMapPerMesh->gGalacticScale.xyz * 100.0);
+
+    // choose an offset along the ray to help break up stepping patterns on near clouds; this will then be further blurred 
+    float t = Dither(0.0f, lvRaymarchDir.xy) * 4.0;
+
+    // trace the nebulae
+    lOutputColour = DoRaymarch( 
+      lvTracePoint, 
+      lvRaymarchDir, 
+      t, 
+      DEREF_PTR( lUniforms.mpGalaxyMapPerMesh ), 
+      DEREF_PTR( lUniforms.mpColourPalettesPerMesh ),
+      SAMPLER2DPARAM_SRT( lUniforms.mpGalaxyMapPerMesh, gNoiseMap )
+      );
+
+    {
+      vec3 lvGoalTUV = ComputeGoalVirtualPlane( lvRaymarchDir, DEREF_PTR( lUniforms.mpGalaxyMapPerMesh ) );
+      float lfGoalSize = lUniforms.mpGalaxyMapPerMesh->gGoalCenterDir.w;
+
+      // galactic sun overlay; always visible through everything - bg effect will add the rest
+      float galSunPulse = mix(lUniforms.mpGalaxyMapPerMesh->gSunCoreConfig.x, lUniforms.mpGalaxyMapPerMesh->gSunCoreConfig.y, lUniforms.mpGalaxyMapPerMesh->gInterest.z) * 2.0;
+
+      float lfRescale = 1.5 - lfGoalSize;
+
+      float galSunCore = 1.0 / ( length( vec2(-lvGoalTUV.y, lvGoalTUV.z) ) * ( galSunPulse * lfRescale ) );
+      galSunCore *= lUniforms.mpGalaxyMapPerMesh->gSunCoreConfig.w * lvGoalTUV.x;
+
+      lOutputColour = mix(
+            lOutputColour,
+            lUniforms.mpGalaxyMapPerMesh->gSunCoreColour,
+            saturate(galSunCore) );
+    }
+
+    lOutputColour.a = pow( lOutputColour.a, lUniforms.mpGalaxyMapPerMesh->gNebulaeStepRange_AlphaPow.z );
+
+    WRITE_FRAGMENT_COLOUR( lOutputColour );
+}
+
+#endif // D_GALACTIC_FOREGROUND
+

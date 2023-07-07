@@ -1,0 +1,574 @@
+////////////////////////////////////////////////////////////////////////////////
+///
+///     @file       FidelityFXSuperResFragment.shader.h
+///     @author     Griff
+///     @date       
+///
+///     @brief      
+///
+///     Copyright (c) 2021 Hello Games Ltd. All Rights Reserved.
+///
+////////////////////////////////////////////////////////////////////////////////
+
+//-----------------------------------------------------------------------------
+//      Compilation defines 
+
+
+//-----------------------------------------------------------------------------
+//      Include files
+
+#include "Common/Defines.shader.h"
+#include "Common/CommonUniforms.shader.h"
+#include "Common/CommonUtils.shader.h"
+// must include this after CommonUniforms
+#include "Fullscreen/PostCommon.h"
+
+
+
+
+//-----------------------------------------------------------------------------
+//      Global Data
+
+
+
+
+//-----------------------------------------------------------------------------
+//      Typedefs and Classes 
+
+DECLARE_INPUT
+    INPUT_SCREEN_POSITION
+    INPUT_SCREEN_SLICE
+
+    INPUT( vec2, mTexCoordsVec2, TEXCOORD0 )
+DECLARE_INPUT_END
+
+#define A_GPU 1
+
+#if defined( D_PLATFORM_VULKAN )
+
+#define A_GLSL 1
+#define A_HALF 1
+// Include the 32-bit path.
+#define FSR_EASU_F 1
+// Include the 16-bit path.
+#define FSR_EASU_H 1
+
+#elif defined( D_PLATFORM_SCARLETT )
+
+half asfloat16(unsigned int _x)
+{
+	return asfloat16( (uint16_t) _x);
+}
+
+#define A_HLSL 1
+#define A_HLSL_6_2 1
+#define A_HALF 1
+// Include the 16-bit path.
+#define FSR_EASU_H 1
+//#define FSR_EASU_F 1
+
+#elif defined( D_PLATFORM_XBOXONE )
+
+#define A_HLSL 1
+//#define A_HALF 1
+// Include the 32-bit path.
+#define FSR_EASU_F 1
+
+#elif defined( D_PLATFORM_DX12 )
+
+#define A_HLSL 1
+#define A_HLSL_6_2 1
+//#define A_HALF 1
+// Include the 16-bit path.
+//#define FSR_EASU_H 1
+#define FSR_EASU_F 1
+
+#elif defined( D_PLATFORM_PROSPERO )
+
+typedef half  min16float;
+typedef half2 min16float2;
+typedef half3 min16float3;
+typedef half4 min16float4;
+typedef ushort  min16uint;
+typedef ushort2 min16uint2;
+typedef ushort3 min16uint3;
+typedef ushort4 min16uint4;
+typedef short  min16int;
+typedef short2 min16int2;
+typedef short3 min16int3;
+typedef short4 min16int4;
+
+
+//#define A_HLSL_6_2
+#define A_HLSL
+#define A_HALF 1
+// Include the 16-bit path.
+#define FSR_EASU_H 1
+
+#elif defined( D_PLATFORM_ORBIS )
+
+#pragma argument(realtypes)
+
+typedef half  min16float;
+typedef half2 min16float2;
+typedef half3 min16float3;
+typedef half4 min16float4;
+typedef ushort  min16uint;
+typedef ushort2 min16uint2;
+typedef ushort3 min16uint3;
+typedef ushort4 min16uint4;
+typedef short  min16int;
+typedef short2 min16int2;
+typedef short3 min16int3;
+typedef short4 min16int4;
+
+#define A_HLSL
+#define A_HALF 1
+// Include the 16-bit path.
+#define FSR_EASU_H 1
+//#define FSR_EASU_F 1
+
+#elif defined( D_PLATFORM_SWITCH )
+
+//------------------------------------------------------------------------------------------------------------------------------
+  //#define AH1_AW1(x) uint16BitsToHalf(AW1(x))
+
+//precision mediump float;
+#define A_SKIP_EXT 1
+#define A_GLSL 1
+//#define A_HALF 1
+// Include the 32-bit path.
+#define FSR_EASU_F 1
+// Include the 16-bit path.
+#define FSR_EASU_H 1
+
+//#define float half
+//#define vec3  f16vec3
+//#define vec4  f16vec4
+
+#elif defined(D_PLATFORM_METAL)
+
+//#pragma argument(realtypes)
+
+typedef half  min16float;
+typedef half2 min16float2;
+typedef half3 min16float3;
+typedef half4 min16float4;
+typedef ushort  min16uint;
+typedef ushort2 min16uint2;
+typedef ushort3 min16uint3;
+typedef ushort4 min16uint4;
+typedef short  min16int;
+typedef short2 min16int2;
+typedef short3 min16int3;
+typedef short4 min16int4;
+
+typedef half  float16_t;
+typedef half2 f16vec2;
+typedef half3 f16vec3;
+typedef half4 f16vec4;
+typedef ushort  min16uint;
+typedef ushort2 min16uint2;
+typedef ushort3 min16uint3;
+typedef ushort4 min16uint4;
+typedef short  min16int;
+typedef short2 i16vec2;
+typedef short3 i16vec3;
+typedef short4 i16vec4;
+typedef ushort  min16uint;
+typedef ushort2 u16vec2;
+typedef ushort3 u16vec3;
+typedef ushort4 u16vec4;
+
+
+#define rcp(X) (1.0 / (X))
+
+uint f32tof16(min16float2 v)
+{
+    return pack_half_to_unorm2x16(v);
+}
+uint packHalf2x16(min16float2 toPack)
+{
+    return pack_half_to_unorm2x16(toPack);
+}
+uint packHalf2x16(float2 toPack)
+{
+    return pack_float_to_unorm2x16(toPack);
+}
+uint packFloat2x16(f16vec2 toPack)
+{
+    return pack_half_to_unorm2x16(toPack);
+}
+uint packFloat2x16(float2 toPack)
+{
+    return pack_float_to_unorm2x16(toPack);
+}
+
+f16vec2 unpackFloat2x16(uint toUnpack)
+{
+    return unpack_unorm2x16_to_half(toUnpack);
+}
+float16_t uint16BitsToHalf( uint16_t toConvert)
+{
+    return as_type<float16_t>(toConvert);
+}
+f16vec2 uint16BitsToHalf( u16vec2 toConvert)
+{
+    return as_type<f16vec2>(toConvert);
+}
+f16vec3 uint16BitsToHalf( u16vec3 toConvert)
+{
+    return as_type<f16vec3>(toConvert);
+}
+f16vec4 uint16BitsToHalf( u16vec4 toConvert)
+{
+    return as_type<f16vec4>(toConvert);
+}
+
+u16vec4 halfBitsToUint16 (f16vec4  conv)
+{
+    return as_type<u16vec4>(conv);
+}
+u16vec3 halfBitsToUint16 (f16vec3  conv)
+{
+    return as_type<u16vec3>(conv);
+}
+u16vec2 halfBitsToUint16 (f16vec2  conv)
+{
+    return as_type<u16vec2>(conv);
+}
+uint16_t halfBitsToUint16 (float16_t  conv)
+{
+    return as_type<uint16_t>(conv);
+}
+u16vec2 unpackUint2x16( uint tounpack )
+{
+    return as_type<u16vec2>(tounpack);
+}
+uint packUint2x16( u16vec2 tounpack )
+{
+    return as_type<uint>(tounpack);
+}
+
+#define A_SKIP_EXT 1
+#define A_GLSL 1
+#define A_HALF 1
+// Include the 32-bit path.
+//#define FSR_EASU_F 1
+// Include the 16-bit path.
+#define FSR_EASU_H 1
+
+//use mobile optimized approach.
+#ifdef D_PLATFORM_IOS
+#define D_MOBILE_OPTIMIZED 1
+#endif
+#endif
+
+//
+
+#include "Fullscreen/FidelityFX/ffx_a.h"
+
+#if defined( D_PLATFORM_SWITCH ) 
+#pragma prioritizeConsecutiveTextureInstructions true
+#pragma fastmath true
+
+// Minimal set of Half defs to allow FP16 FSR
+#define A_HALF 1
+#define ASW1 int16_t
+#define ASW2 i16vec2
+#define ASW3 i16vec3
+#define ASW4 i16vec4
+#define AH1 float16_t
+#define AH2 f16vec2
+#define AH3 f16vec3
+#define AH4 f16vec4
+#define AW1 uint16_t
+#define AW2 u16vec2
+#define AW3 u16vec3
+#define AW4 u16vec4
+
+ // Negative and positive infinity.
+#define A_INFP_H AH1_AW1(0x7c00u)
+#define A_INFN_H AH1_AW1(0xfc00u)
+
+AW1 AW1_x( AW1 a ) { return AW1( a ); }
+AW2 AW2_x( AW1 a ) { return AW2( a, a ); }
+AW3 AW3_x( AW1 a ) { return AW3( a, a, a ); }
+AW4 AW4_x( AW1 a ) { return AW4( a, a, a, a ); }
+#define AW1_(a) AW1_x(AW1(a))
+#define AW2_(a) AW2_x(AW1(a))
+#define AW3_(a) AW3_x(AW1(a))
+#define AW4_(a) AW4_x(AW1(a))
+
+AH1 AH1_x(AH1 a){return AH1(a);}
+AH2 AH2_x(AH1 a){return AH2(a,a);}
+AH3 AH3_x(AH1 a){return AH3(a,a,a);}
+AH4 AH4_x(AH1 a){return AH4(a,a,a,a);}
+#define AH1_(a) AH1_x(AH1(a))
+#define AH2_(a) AH2_x(AH1(a))
+#define AH3_(a) AH3_x(AH1(a))
+#define AH4_(a) AH4_x(AH1(a))
+
+// Not full support for the following extensions?
+//  #extension GL_EXT_shader_16bit_storage:require
+//  #extension GL_EXT_shader_explicit_arithmetic_types : require
+//#define AH1_AW1(x) uint16BitsToHalf(AW1(x))
+//#define AH2_AW2(x) uint16BitsToHalf(AW2(x))
+//#define AH3_AW3(x) uint16BitsToHalf(AW3(x))
+//#define AW2_AH2(x) halfBitsToUint16(AH2(x))
+//#define AW3_AH3(x) halfBitsToUint16(AH3(x))
+
+// FIXME: NIC, this is not using bits as a new type on Switch!
+#define AH1_AW1(x) AH1(AW1(x))
+#define AH2_AW2(x) AH2(AW2(x))
+#define AH3_AW3(x) AH3(AW3(x))
+#define AW2_AH2(x) AW2(AH2(x))
+#define AW3_AH3(x) AW3(AH3(x))
+
+AH1 ARcpH1(AH1 x){return AH1_(1.0)/x;}
+AH2 ARcpH2(AH2 x){return AH2_(1.0)/x;}
+AH1 ARsqH1(AH1 x) { return AH1_(1.0) / sqrt(x); }
+AH1 ASatH1(AH1 x){return clamp(x, AH1_(0.0), AH1_(1.0));}
+AH2 ASatH2(AH2 x){return clamp(x,AH2_(0.0),AH2_(1.0));}
+AH1 APrxLoRcpH1(AH1 x){return AH1_(1.0)/x;}
+AH1 APrxLoRsqH1(AH1 x){return inversesqrt(x);}
+
+AH1 AMax3H1( AH1 x, AH1 y, AH1 z ) { return max( x, max( y, z ) ); }
+AH2 AMax3H2( AH2 x, AH2 y, AH2 z ) { return max( x, max( y, z ) ); }
+AH2 APrxMedRcpH2( AH2 a ) { AH2 b = AH2_AW2( AW2_( 0x778d ) - AW2_AH2( a ) ); return b * ( -b * a + AH2_( 2.0 ) ); }
+AH3 APrxMedRcpH3( AH3 a ) { AH3 b = AH3_AW3( AW3_( 0x778d ) - AW3_AH3( a ) ); return b * ( -b * a + AH3_( 2.0 ) ); }
+AH3 ASatH3( AH3 x ) { return clamp( x, AH3_( 0.0 ), AH3_( 1.0 ) ); }
+AH2 AGtZeroH2( AH2 m ) { return ASatH2( m*AH2_( A_INFP_H ) ); }
+AH3 AGtZeroH3( AH3 m ) { return ASatH3( m*AH3_( A_INFP_H ) ); }
+#endif
+
+#ifdef D_PLATFORM_METAL
+    // Minimal set of Half defs to allow FP16 RCAS
+    #define ASW1 short
+    #define ASW2 short2
+    #define ASW3 short3
+    #define ASW4 short4
+    #define AH1 half
+    #define AH2 half2
+    #define AH3 half3
+    #define AH4 half4   
+    // use fp16 rcas
+    #define FSR_RCAS_F
+#else
+    // use fp32 rcas
+    #define FSR_RCAS_F
+#endif
+
+#include "Fullscreen/FidelityFX/ffx_fsr1_standalone.h"
+
+#ifndef D_PLATFORM_METAL
+    #define BUFFER_MAP_PARAMS 
+#endif
+
+#ifdef D_PLATFORM_METAL
+    AF4 FsrRcasLoadF(ASU2 p, SAMPLER2DARG(gBufferMap))
+    {
+        return texelFetch( gBufferMap, p, 0 );
+    }
+    AH4 FsrRcasLoadH(ASW2 p, SAMPLER2DARG(gBufferMap))
+    {
+        return AH4(texelFetch( gBufferMap, p, 0 ));
+    }
+
+
+    void FsrRcasInputF(inout AF1 r,inout AF1 g,inout AF1 b)
+    {
+        
+    }
+    void FsrRcasInputH(inout AH1 r,inout AH1 g,inout AH1 b)
+    {
+        
+    }
+
+    #define BUFFER_MAP_PARAMS ,SAMPLER2DPARAM(SAMPLER_GETMAP( lUniforms.mpCustomPerMesh, gBufferMap ))
+
+    AF4 FsrEasuRF(AF2 p, SAMPLER2DARG(gBufferMap)){return textureGatherRed(gBufferMap, p);}
+    AF4 FsrEasuGF(AF2 p, SAMPLER2DARG(gBufferMap)){return textureGatherGreen(gBufferMap, p);}
+    AF4 FsrEasuBF(AF2 p, SAMPLER2DARG(gBufferMap)){return textureGatherBlue(gBufferMap, p);}
+
+    #if defined( A_HALF )
+    AH4 FsrEasuRH(AF2 p, SAMPLER2DARG(gBufferMap)){return AH4(textureGatherRed(gBufferMap,AF2(p)));}
+    AH4 FsrEasuGH(AF2 p, SAMPLER2DARG(gBufferMap)){return AH4(textureGatherGreen(gBufferMap,AF2(p)));}
+    AH4 FsrEasuBH(AF2 p, SAMPLER2DARG(gBufferMap)){return AH4(textureGatherBlue(gBufferMap,AF2(p)));}
+    #else
+    AF4 FsrEasuRH(AF2 p, SAMPLER2DARG(gBufferMap)){return AF4(textureGatherRed(gBufferMap,AF2(p)));}
+    AF4 FsrEasuGH(AF2 p, SAMPLER2DARG(gBufferMap)){return AF4(textureGatherGreen(gBufferMap,AF2(p)));}
+    AF4 FsrEasuBH(AF2 p, SAMPLER2DARG(gBufferMap)){return AF4(textureGatherBlue(gBufferMap,AF2(p)));}
+    #endif
+
+#elif !defined( D_PLATFORM_ORBIS )
+
+AF4 FsrEasuRF(AF2 p){return textureGatherRed(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),p);}
+AF4 FsrEasuGF(AF2 p){return textureGatherGreen(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),p);}
+AF4 FsrEasuBF(AF2 p){return textureGatherBlue(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),p);}
+
+#if defined( A_HALF )
+AH4 FsrEasuRH(AF2 p){return AH4(textureGatherRed(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),AF2(p)));}
+AH4 FsrEasuGH(AF2 p){return AH4(textureGatherGreen(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),AF2(p)));}
+AH4 FsrEasuBH(AF2 p){return AH4(textureGatherBlue(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),AF2(p)));}
+#else
+AF4 FsrEasuRH(AF2 p){return AF4(textureGatherRed(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),AF2(p)));}
+AF4 FsrEasuGH(AF2 p){return AF4(textureGatherGreen(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),AF2(p)));}
+AF4 FsrEasuBH(AF2 p){return AF4(textureGatherBlue(SAMPLER_GETMAP(lUniforms.mpCustomPerMesh, gBufferMap),AF2(p)));}
+#endif
+
+
+#else
+
+   DECLARE_PTR( CustomPerMeshUniforms,        gpCustomPerMesh )   
+
+AF4 FsrEasuRF(AF2 p){return textureGatherRed(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),p);}
+AF4 FsrEasuGF(AF2 p){return textureGatherGreen(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),p);}
+AF4 FsrEasuBF(AF2 p){return textureGatherBlue(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),p);}
+
+#if defined( A_HALF )
+AH4 FsrEasuRH(AF2 p){return AH4(textureGatherRed(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),AF2(p)));}
+AH4 FsrEasuGH(AF2 p){return AH4(textureGatherGreen(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),AF2(p)));}
+AH4 FsrEasuBH(AF2 p){return AH4(textureGatherBlue(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),AF2(p)));}
+#else
+AF4 FsrEasuRH(AF2 p){return AF4(textureGatherRed(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),AF2(p)));}
+AF4 FsrEasuGH(AF2 p){return AF4(textureGatherGreen(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),AF2(p)));}
+AF4 FsrEasuBH(AF2 p){return AF4(textureGatherBlue(SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap),AF2(p)));}
+#endif
+
+#endif
+
+#if defined( D_POSTPROCESS_FFX_SUPER_RES )
+
+#ifdef D_FRAGMENT
+
+FRAGMENT_MAIN_COLOUR_SRT
+{
+	AU4 con0,con1,con2,con3;
+#if FSR_EASU_F
+    AF3 c;
+#else
+    AH3 c;
+#endif
+	AU2 gxy = AU2( IN_SCREEN_POSITION.xy );
+	vec2 lTextureResolutionVec2 = vec2(GetTexResolution( SAMPLER_GETMAP( lUniforms.mpCustomPerMesh, gBufferMap ) ) );
+    FsrEasuCon(con0,con1,con2,con3,
+    lTextureResolutionVec2.x, lTextureResolutionVec2.y,
+    lTextureResolutionVec2.x, lTextureResolutionVec2.y,	
+    lUniforms.mpPerFrame.gFrameBufferSizeVec4.x,lUniforms.mpPerFrame.gFrameBufferSizeVec4.y);
+#if defined( D_PLATFORM_ORBIS )	 	
+	gpCustomPerMesh = lUniforms.mpCustomPerMesh;
+#endif			
+#if FSR_EASU_F
+	FsrEasuF(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS);
+	WRITE_FRAGMENT_COLOUR( vec4(c,1.0 ) );
+#else
+#if defined( D_MOBILE_OPTIMIZED )	 	
+	FsrEasuL(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS );
+#else			
+    //MAKE MACRO FOR SAMPLER@DPARAM for metal otherwise null for other platforms instead of ifdefs all over the place
+	FsrEasuH(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS );
+#endif
+    WRITE_FRAGMENT_COLOUR( vec4(AF3(c),1.0 ) );
+#endif
+}
+
+#else
+
+COMPUTE_MAIN_SRT(64,1,1)
+{
+#if defined( D_PLATFORM_ORBIS )	 	
+	gpCustomPerMesh = lUniforms.mpCustomPerMesh;
+#endif		
+	// Remapped local xy in workgroup.
+	AU2 gxy=ARmp8x8(groupThreadID.x)+AU2(groupID.x<<4u,groupID.y<<4u);
+	// Fetch the constants from some constant buffer.
+	AU4 con0,con1,con2,con3;
+
+	vec2 lTextureResolutionVec2 = vec2(GetTexResolution( SAMPLER_GETMAP( lUniforms.mpCustomPerMesh, gBufferMap ) ) );
+    FsrEasuCon(con0,con1,con2,con3,
+    lTextureResolutionVec2.x, lTextureResolutionVec2.y,
+    lTextureResolutionVec2.x, lTextureResolutionVec2.y,
+    lUniforms.mpPerFrame.gFrameBufferSizeVec4.x,lUniforms.mpPerFrame.gFrameBufferSizeVec4.y);
+   
+#if FSR_EASU_F
+    AF3 c;
+#else
+    AH3 c;
+#endif
+
+#if FSR_EASU_F
+   FsrEasuF(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS);
+#else
+   FsrEasuH(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS);
+   imageStore( SAMPLER_GETMAP( lUniforms.mpCmpOutPerMesh, gOutTexture0 ), ivec2( gxy ).xy,  vec4( vec3(c),1.0 )  );
+   gxy.x += 8u;
+   FsrEasuH(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS);
+   imageStore( SAMPLER_GETMAP( lUniforms.mpCmpOutPerMesh, gOutTexture0 ), ivec2( gxy ).xy,  vec4( vec3(c),1.0 )  );
+   gxy.y += 8u;
+   FsrEasuH(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS);
+   imageStore( SAMPLER_GETMAP( lUniforms.mpCmpOutPerMesh, gOutTexture0 ), ivec2( gxy ).xy,  vec4(  vec3(c),1.0 )  );	
+   gxy.x -= 8u;
+   FsrEasuH(c,gxy,con0,con1,con2,con3 BUFFER_MAP_PARAMS);
+   imageStore( SAMPLER_GETMAP(lUniforms.mpCmpOutPerMesh, gOutTexture0 ), ivec2( gxy ).xy,  vec4( vec3(c),1.0 )  );
+#endif	
+
+}
+#endif
+
+#endif
+
+#if defined( D_POSTPROCESS_FFX_RCASHARPEN )
+
+#ifndef D_PLATFORM_METAL
+
+#if defined ( D_PLATFORM_SWITCH )
+// FIXME: Need to handle texelFetch properly on Switch...
+AF4 FsrRcasLoadF( ASU2 p )
+{
+    return AF4( 0.0, 0.0, 0.0, 1.0 );
+}
+
+#else 
+
+AF4 FsrRcasLoadF(ASU2 p)
+ {
+#if defined ( D_PLATFORM_SWITCH )
+    return TEXELFETCH( SAMPLER_GETMAP( UNIFORM( lUniforms, mpCustomPerMesh ), gBufferMap ), p, 0 );
+#elif !defined( D_PLATFORM_ORBIS) && !defined( D_PLATFORM_XBOXONE )	 
+	return texelFetch( SAMPLER_GETMAP( lUniforms.mpCustomPerMesh, gBufferMap ),p,0 );
+#else
+	return textureLoadF( SAMPLER_GETMAP( gpCustomPerMesh, gBufferMap ),p,0 );
+#endif
+ }
+#endif // defined ( D_PLATFORM_SWITCH )
+ void FsrRcasInputF(inout AF1 r,inout AF1 g,inout AF1 b)
+ {
+	 
+ }
+#endif
+
+
+FRAGMENT_MAIN_COLOUR_SRT
+{
+#if defined( D_PLATFORM_ORBIS )	 	
+	gpCustomPerMesh = lUniforms.mpCustomPerMesh;
+#endif	
+	AU4 con0;
+    #if defined(FSR_RCAS_H)
+    AH1 r,g,b;
+    #else
+    AF1 r,g,b;
+    #endif
+	AU2 gxy = AU2( IN_SCREEN_POSITION.xy );
+
+    FsrRcasCon(con0,0.2);
+    #if defined(FSR_RCAS_H)
+	FsrRcasH(r,g,b,gxy,con0 BUFFER_MAP_PARAMS);
+    #else
+	FsrRcasF(r,g,b,gxy,con0 BUFFER_MAP_PARAMS);
+    #endif
+	WRITE_FRAGMENT_COLOUR( vec4(r,g,b,1.0 ) );
+}
+
+#endif

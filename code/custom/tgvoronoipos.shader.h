@@ -1,0 +1,49 @@
+////////////////////////////////////////////////////////////////////////////////
+///
+///     @file       ComputeNoise.h
+///     @author     ccummings
+///     @date       
+///
+///     @brief      Basic shader to execute a series of Noise3D samples
+///
+///     Copyright (c) 2016 Hello Games Ltd. All Rights Reserved.
+///
+////////////////////////////////////////////////////////////////////////////////
+
+#include "Common/Defines.shader.h"
+#include "Custom/TerrainGenCommon.h"
+
+#ifdef D_PLATFORM_ORBIS
+#pragma argument(nofastmath)
+#endif
+
+#ifndef D_PLATFORM_ORBIS
+	ROBUFF(vec3, maRequests , 0);
+	RWBUFF(sVoronoiResults,     maResults , 1);
+    #ifdef TK_TGEN_VORONOI_DEBUG
+	RWBUFF(sVoronoiDebugOutput, maDebugResults,2);
+    #endif
+#endif
+
+// Entry point for the compute shader with semantics that define the 
+// variations of the ID to determine the thread instance invoked.
+COMPUTE_MAIN_UNIF( 64, 1, 1, cTkVoronoiPosComputeUniforms )
+{
+    //get index and bail if gone to far
+	uint idx = dispatchThreadID.x;
+	if (idx >= lUniforms.miNumElements)
+		return;
+
+    sVoronoiResults lResults;
+
+    #ifdef TK_TGEN_VORONOI_DEBUG
+    sVoronoiDebugOutput lDbg;
+    VoronoiDistanceOnCube(GETBUFF(maRequests)[idx], lUniforms.miSeed, lUniforms.mfRadius, lUniforms.mfScaleFactor, lResults.miID, lResults.mfCenterDistance, lResults.mCenterPosition, lResults.mFloorPosition, lResults.mNormal, lDbg);
+    GETBUFF(maDebugResults)[idx] = lDbg;
+    #else
+    VoronoiDistanceOnCube(GETBUFF(maRequests)[idx], lUniforms.miSeed, lUniforms.mfRadius, lUniforms.mfScaleFactor, lResults.miID, lResults.mfCenterDistance, lResults.mCenterPosition, lResults.mFloorPosition, lResults.mNormal);
+    #endif
+
+    GETBUFF(maResults)[idx] = lResults;
+}
+  

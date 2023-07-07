@@ -1,0 +1,130 @@
+////////////////////////////////////////////////////////////////////////////////
+///
+///     @file       ComputeNoise.h
+///     @author     strgiu
+///     @date       08-06-2022
+///
+///     @brief      Basic shader to compact instance data for occlusion culled instances
+///
+///     Copyright (c) 2022 Hello Games Ltd. All Rights Reserved.
+///
+////////////////////////////////////////////////////////////////////////////////
+
+#if defined( D_USE_CROSS_LANE )
+
+#if ( defined( D_PLATFORM_PC ) && defined( D_USE_CROSS_LANE ) ) || defined( D_PLATFORM_SWITCH )
+#define D_CROSS_LANE_CULL
+#endif
+
+#if defined( D_CROSS_LANE_CULL )
+#extension GL_KHR_shader_subgroup_basic         : enable
+#extension GL_KHR_shader_subgroup_ballot        : enable
+#extension GL_KHR_shader_subgroup_vote          : enable
+#extension GL_KHR_shader_subgroup_arithmetic    : enable
+#endif
+
+#endif
+
+#include "Custom/ComputeCullCommon.h"
+
+// =================================================================================================
+//
+// BUILD_INSTANCE_BUFFER
+//
+// =================================================================================================
+#if defined( D_BUILD_INSTANCE_BUFFER )
+
+COMPUTE_MAIN_SRT( 1024, 1, 1 )
+{
+    uint    luInstSrcIdx;
+    uint    luInstDstIdx;
+    uint    luIndirectIdx;
+    uint    luIndirectMin;
+    uint    luIndirectMax;
+    uint    luInstCount;
+    bool    lbValidInst;
+    uint    luValidCount;
+    uvec4   luValidInstBits;
+
+    luInstSrcIdx    = dispatchThreadID.x;
+    luInstCount     = lUniforms.mpPerDispatchUniforms.guInstCount;
+
+    if ( luInstSrcIdx >= luInstCount )
+        return;
+
+    luInstSrcIdx   += lUniforms.mpPerDispatchUniforms.guInstBaseIndex;
+    lbValidInst     = GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaFlgInstanceData, luInstSrcIdx ) == 1;
+
+    #if !defined( D_CROSS_LANE_CULL )
+    if ( lbValidInst )
+    {
+        uint luOldInstanceCount;
+        luIndirectIdx   = GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectIndices, luInstSrcIdx );
+        luInstDstIdx    = GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectCmdData, luIndirectIdx ).muFirstInstance;
+        AtomicAddOut(     GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectCmdData, luIndirectIdx ).muInstanceCount, 1, luOldInstanceCount );
+        luInstDstIdx   += luOldInstanceCount;
+        GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaDstInstanceData, luInstDstIdx ) = GETBUFFERDATA(lUniforms.mpPerDispatchUniforms, gaSrcInstanceData, luInstSrcIdx );
+    }
+    #else
+
+    if ( !subgroupAny( lbValidInst ) )
+    {
+        // all the insts consumed by this wave are invalid (culled)
+        // so let's early out
+        return;
+    }
+
+    luIndirectIdx   = GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectIndices, luInstSrcIdx );
+    luIndirectMin   = subgroupMin( luIndirectIdx );
+    luIndirectMax   = subgroupMax( luIndirectIdx );
+
+    for ( uint ii = luIndirectMin; ii <= luIndirectMax; ++ii )
+    {
+        if ( luIndirectIdx == ii )
+        {
+            // get count of valid (not culled) instances
+            luValidInstBits = subgroupBallot( lbValidInst );
+            luValidCount    = subgroupBallotBitCount( luValidInstBits );
+
+            if ( subgroupElect() )
+            {
+                uint luOldInstanceCount;
+                luInstDstIdx    = GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectCmdData, luIndirectIdx ).muFirstInstance;
+                AtomicAddOut(     GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectCmdData, luIndirectIdx ).muInstanceCount, luValidCount, luOldInstanceCount );
+                luInstDstIdx   += luOldInstanceCount;
+            }
+
+            luInstDstIdx    = subgroupBroadcastFirst( luInstDstIdx );
+            luInstDstIdx   += subgroupBallotExclusiveBitCount( luValidInstBits );
+        }
+    }
+
+    if ( lbValidInst )
+    {
+        GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaDstInstanceData, luInstDstIdx ) = GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaSrcInstanceData, luInstSrcIdx );
+    }
+    #endif
+}
+
+#endif
+
+// =================================================================================================
+//
+// CLEAR_DRAW_COUNTS
+//
+// =================================================================================================
+#if defined( D_CLEAR_DRAW_COUNTS )
+
+COMPUTE_MAIN_SRT( 256, 1, 1 )
+{
+#if defined ( D_PLATFORM_METAL )
+	atomic_store_explicit(
+		&GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectCmdData, dispatchThreadID.x ).muInstanceCount,
+		0,
+		memory_order::memory_order_relaxed );
+#else
+    GETBUFFERDATA( lUniforms.mpPerDispatchUniforms, gaIndirectCmdData, dispatchThreadID.x ).muInstanceCount = 0;
+#endif
+}
+
+#endif
